@@ -24,6 +24,7 @@ class VESSEL:
                s1_isp_asl,      #stage 1: specific impulse isp at sea level [s]
                s1_isp_vac,      #stage 1: specific impulse isp in vaccum [s]
                s1_A,            #stage 1: reference cross sectional area [m2]
+               s1_engT,        #stage 1: waittime until launchtower release engine preingition time [s]     
                s2_m0,           #stage 2: mass at separation [kg]
                s2_mp,           #stage 2: propellant mass [kg]
                s2_thrust,       #stage 2: thrust in vaccum [N]
@@ -47,6 +48,7 @@ class VESSEL:
     self.s1_twr_asl = s1_thrust_asl/(s1_m0*g0)                  #stage 1: thrust weight ratio twr (asl) [#]
     self.s1_twr_final = self.s1_mfr*s1_isp_vac/(s1_m0-s1_mp)    #stage 1: final thrust weight ratio [#]
     self.Cw = Cw
+    self.s1_engT = s1_engT
     
     #vessel info stage 2
     self.s2_m0 = s2_m0
@@ -82,8 +84,9 @@ class VESSEL:
     self.vdloss = 0
     self.maxq = 0
     
-    #PEG state = 0
-    self.PEG_state = 0            #not yet started PEG 
+    #logging 
+    self.trajectory =  np.zeros((1,7))    #log launch trajectory
+    self.PEGparameters = np.zeros((1,5)) 
     
   def _setstate(self, state):
     if state == ('s1'): 
@@ -112,6 +115,13 @@ class VESSEL:
     self.R = R + altitude
     self.vx_gain = (2*np.pi*self.R/24/3600)*np.cos(latitude*2*np.pi/360)   #horizontal velocity gained from Earth's rotation [m/s]
     
+  def logtrajectory(self):
+    self.q = 0.5*(self.v[0]*self.v[0]+self.v[1]*self.v[1]+self.v[2]*self.v[2])*rho(self.alt)                   #dynamic pressure  [kg/ms2]
+    self.trajectory = np.append(self.trajectory,[[self.t, self.v[0], self.v[2], self.alt, self.pitch, self.m, self.q]],axis=0)
+      
+  def logPEGparameters(self):
+    self.PEGparameters = np.append(self.PEGparameters,[[self.t, self.PEG_A, self.PEG_B, self.PEG_C, self.PEG_T]],axis=0)
+
   #function calculates apoapsis and periapsis for a coasting vessel (no acceleration) on earth
   def _getOrbital(self):
     #function from https://github.com/Noiredd/PEGAS
@@ -157,7 +167,7 @@ class VESSEL:
     q = 0.5*(self.v[0]*self.v[0]+self.v[1]*self.v[1]+self.v[2]*self.v[2])*rho(alt)                   #dynamic pressure  [kg/ms2]
     Cd =  np.interp(np.linalg.norm(self.v), self.Cw[:,0], self.Cw[:,1])   #current vessel drag coefficient     
     Fd = -Cd*self.A*q                                                 #drag force along vessel propagation
-    self.q = q                                            
+                               
     
     #calculate thrust along vessel propagation
     Ft = self.isp*g0*self.mfr
@@ -183,6 +193,9 @@ class VESSEL:
     #calculate losses in delta-v
     self.vgloss = self.vgloss + Fg/m*dt  
     self.vdloss = self.vdloss + Fd/m*dt
+    
+    #update time
+    self.t = self.t + dt
      
     return
     
@@ -227,6 +240,9 @@ class VESSEL:
     self.alt = self.alt + self.v[2]*dt
     self.R = self.alt + R    
     
+    #update time
+    self.t = self.t + dt
+    
     return
     
     
@@ -234,53 +250,49 @@ class VESSEL:
   #v_start [m/s]. After that the vessel launches along its velocity vector (zero angle of attack)
   #returns trajectory [time (s), velocity vector (m/s), altitude (m), pitch (deg), ridial position (m), status (1,2,3), dynamic pressure q (kg/ms2)]
   def AscentSimulation(self, v_start, pitch_init, target_altitude, target_vz, stage):
-    #log launch trajectory
-    trajectory = np.zeros((1,7)) 
-    PEGparameters = np.zeros((1,5))  
-  
+ 
     #start simulation
     dt = 0.1                    #time step [s]     
-    t = 0                       #simulation time [s]
+    self.t = 0                 #simulation time [s]
     
     #first wait 1.5 s to launch after ignition of engines
-    while t < 1.5:
+    while self.t < self.s1_engT:
       self.m = self.m - self.mfr * dt
-      t = t + dt    
-      #log launch trajectory data      
-      trajectory = np.append(trajectory,[[t, self.v[0], self.v[2], self.alt, self.pitch, self.m, self.q]],axis=0)
+      self.t = self.t + dt
       
+      #log launch trajectory data      
+      self.logtrajectory()
     
     #perform simulation    
-    while t < self.s1_tb:
+    while self.t < self.s1_tb:
       #check status of flight      
       if (np.linalg.norm(self.v) < v_start) :
-        status = 1    #lock steering to UP until velocity > v_init
+        #lock steering to UP until velocity > v_init
         self._propagate_lock(dt, 90, 0 , 0)
       elif (np.linalg.norm(self.v) >= v_start and np.arctan2(self.v[2],self.v[0])*360/(2*np.pi) > pitch_init):
-        status = 2   #pitchover maneuver
+        #pitchover maneuver
         self._propagate_lock(dt, max(self.pitch-dt, pitch_init), 0 , 0)    # 1 deg/s change in pitch 
       elif (np.linalg.norm(self.v) >= v_start and np.arctan2(self.v[2],self.v[0])*360/(2*np.pi) <= pitch_init):
-        status = 3   #free gravity turn along prograde vector
+        #free gravity turn along prograde vector
         self._propagate_step(dt)
       else:
         break
       
       #break ascent simulation if altitude is negative or pitch is negative
       if (self.pitch < 0) or (self.alt < 0):
-        return trajectory, PEGparameters
+        return 
       
-      t = t + dt
-           
       #log launch trajectory data      
-      trajectory = np.append(trajectory,[[t, self.v[0], self.v[2], self.alt, self.pitch, self.m, self.q]],axis=0)
-             
+      self.logtrajectory()
+      
+      
     #update time elapsed
-    self.t = t
+    self.s1_totalburntime = self.t
  
     #jettison stage 1 
     self._setstate('s2')
     if stage == 1:        
-      return trajectory, PEGparameters
+      return 
       
     
     #get to circular orbit with PEG
@@ -312,53 +324,43 @@ class VESSEL:
      
     #coast for ullage and pitch change, requires RCS capable second stage    
     pitchdot = 1     #0.5 deg change per second this is only an estimate
-    t = self.t
     
-    self.mfr = 0
-    
+    maxpitchovertime = self.t + 15
+    self.mfr = 0    
     while self.pitch != pitch:
       if np.abs(self.pitch - pitch) < pitchdot*dt:
         break
       
-      if (t - self.t) > 15:
+      if (self.t - maxpitchovertime) > 15:
         break
       
       self.pitch = self.pitch + pitchdot*np.sign(pitch-self.pitch)*dt
       self._propagate_lock(dt, self.pitch, 0 , 0)
            
-      t = t + dt
+      self.t = self.t + dt
       
       #log launch trajectory data      
-      trajectory = np.append(trajectory,[[t, self.v[0], self.v[2], self.alt, self.pitch, self.m,  self.q]],axis=0)
-     
+      self.logtrajectory()
+      
     #update time and ignite state 2
-    self.t = t
     self.mfr = self.s2_mfr    
     
     #ignition stage 2
     #continue with ascent guided PEG
-    t = self.t 
-    t_noPEGupdate = 6     #time before burnout [s] where PEG parameters are not calculated anymore
-    
-    while t < (self.t + self.s2_tb):   #burnout of stage 2
+    timeats2ignition = self.t
+    timeats2burnout = self.t + self.s2_tb    
+    while self.t < (timeats2burnout):   #burnout of stage 2
           
       if self.PEG_T <= 0.0: 
         break
       
       self._propagatePEG_step(dt, 2, target_altitude, target_vz)
      
-      t = t + dt      
-    
       #log launch trajectory data      
-      trajectory = np.append(trajectory,[[t, self.v[0], self.v[2], self.alt, self.pitch, self.m, self.q]],axis=0)
-        
+      self.logtrajectory()
+      
       #log PEG parameters
-      PEGparameters = np.append(PEGparameters,[[t, self.PEG_A, self.PEG_B, self.PEG_C, self.PEG_T]],axis=0)
-
-    #update vessel elapsed time
-    self.t = t  
-    
-    #max q
-    self.maxq = max(trajectory[:,6])
+      self.logPEGparameters()
    
-    return trajectory, PEGparameters
+   
+    return 
