@@ -59,6 +59,24 @@ def try_AscentSimulation(vessel, velocities, pitches):
   
   return v_, p_, a_, q_, l_, m_, b_
 
+def writeKSbootscript(vessel, name):
+  filename = 'boot_PEG_' + name + '.ks'
+  f = open(filename,'w')
+  
+  #first write name in variable
+  f.write('GLOBAL P_vName IS "' + name + '".\n\n') # python will convert \n to os.linesep
+  
+  #next write sequence
+  f.write('//ignition (delay before release), booster jettison, fairings jettison, cutoff, separation, ullage, ignition, PEG activation, stage 2 maxT\n')
+  f.write('GLOBAL P_seq IS LIST(' + ' -%.2f' % (1.4) + ', , , ' + '%.2f' % (vessel.s1_tb - 1.4) + ', , , , , ' + '%.2f' % (vessel.s2_tb) + ').//remember to fill this!\n')
+
+
+
+  
+  f.close()    # you can omit in most cases as the destructor will call it
+  
+  return
+
 
 #define ships drag curfe
 Cd = np.array([[ 0, 0.122], [256.0, 0.122], [343.2, 0.883], [643.5, 1.258], [909.5, 1.154], [1673,  0.676],[9999,  0.776]])
@@ -130,7 +148,10 @@ ves2s = VESSEL3S(
 
 ves.add_launchsite(441,45.9)    #add launchsite at altitude of 441 m and latitude of 45.9 deg
 
-[trajectory, PEGparameters] = ves.AscentSimulation(50, 86.5, R+ 200000, 0,3)
+ves.AscentSimulation(50, 86.5, R+ 200000, 0,3)
+
+writeKSbootscript(ves, 'test')
+
 
 try_velocities = np.linspace(50,50,1)
 try_pitches = np.linspace(82,89,16)
@@ -139,37 +160,37 @@ try_pitches = np.linspace(82,89,16)
 
 
 plt.figure()
-plt.plot(trajectory[:,0],trajectory[:,1])
+plt.plot(ves.trajectory[:,0],ves.trajectory[:,1])
 plt.xlabel('Time [s]')
 plt.ylabel('Tangential velocity (orbit) [m/s]')
 
 plt.figure()
-plt.plot(trajectory[:,0],trajectory[:,2])
+plt.plot(ves.trajectory[:,0],ves.trajectory[:,2])
 plt.xlabel('Time [s]')
 plt.ylabel('Radial (vertical) velocity [m/s]')
 
 plt.figure()
-plt.plot(trajectory[:,0],trajectory[:,3])
+plt.plot(ves.trajectory[:,0],ves.trajectory[:,3])
 plt.xlabel('Time [s]')
 plt.ylabel('Altitude [m]')
 
 plt.figure()
-plt.plot(trajectory[:,0],trajectory[:,4])
+plt.plot(ves.trajectory[:,0],ves.trajectory[:,4])
 plt.xlabel('Time [s]')
 plt.ylabel('Pitch [deg]')
 
 plt.figure()
-plt.plot(trajectory[:,0],trajectory[:,6])
+plt.plot(ves.trajectory[:,0],ves.trajectory[:,6])
 plt.ylabel('Dynamic pressure q [kg/ms2]')
 plt.xlabel('Time [s]')
 
 plt.figure()
-plt.plot(PEGparameters[:,0],PEGparameters[:,1])
+plt.plot(ves.PEGparameters[:,0],ves.PEGparameters[:,1])
 plt.ylabel('PEG parameter A [#]')
 plt.xlabel('Time [s]')
 
 plt.figure()
-plt.plot(PEGparameters[:,0],PEGparameters[:,2])
+plt.plot(ves.PEGparameters[:,0],ves.PEGparameters[:,2])
 plt.ylabel('PEG parameter B [#]')
 plt.xlabel('Time [s]')
 
